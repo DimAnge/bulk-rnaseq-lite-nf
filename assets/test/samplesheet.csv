@@ -1,0 +1,7 @@
+sample,fastq_1,fastq_2,condition,batch
+ctrl_1,reads/ctrl_1/R1.fastq.gz,reads/ctrl_1/R2.fastq.gz,control,A
+ctrl_2,reads/ctrl_2/R1.fastq.gz,,control,B
+ctrl_3,reads/ctrl_3/R1.fastq.gz,reads/ctrl_3/R2.fastq.gz,control,B
+trt_1,reads/trt_1/R1.fastq.gz,reads/trt_1/R2.fastq.gz,treated,A
+trt_2,reads/trt_2/R1.fastq.gz,,treated,B
+trt_3,reads/trt_3/R1.fastq.gz,reads/trt_3/R2.fastq.gz,treated,A
