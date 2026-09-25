@@ -24,6 +24,7 @@ process STAR_INDEX {
     genome_len=\$(grep -v '>' ref.fa | tr -d '\\n' | wc -c)
     sa_bases=\$(awk -v len="\$genome_len" 'BEGIN { n = int(log(len) / log(2) / 2 - 1); print (n < 14 ? n : 14) }')
 
+    # STAR gets 90% of the task memory: Docker kills the container at 100%.
     mkdir ${index_dir}
     STAR --runMode genomeGenerate \\
         --runThreadN ${task.cpus} \\
@@ -32,7 +33,7 @@ process STAR_INDEX {
         --sjdbGTFfile ref.gtf \\
         --sjdbOverhang ${params.read_length - 1} \\
         --genomeSAindexNbases \$sa_bases \\
-        --limitGenomeGenerateRAM ${task.memory.toBytes()} \\
+        --limitGenomeGenerateRAM ${task.memory.toBytes().intdiv(10) * 9} \\
         ${sparse}
     """
 }

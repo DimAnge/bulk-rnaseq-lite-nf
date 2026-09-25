@@ -64,7 +64,8 @@ counts <- as.matrix(counts_df[, -1, drop = FALSE])
 rownames(counts) <- counts_df$gene_id
 
 # Read the samplesheet and put its rows in the same order as the count columns.
-samples <- read.csv(params$samplesheet, stringsAsFactors = FALSE, check.names = FALSE,
+# Everything is read as text first, so IDs like "01" or a condition called "T" stay as written.
+samples <- read.csv(params$samplesheet, colClasses = "character", check.names = FALSE,
                     fileEncoding = "UTF-8-BOM", strip.white = TRUE)
 missing_samples <- setdiff(colnames(counts), samples$sample)
 if (length(missing_samples) > 0) {
@@ -114,9 +115,20 @@ not_found <- setdiff(design_vars, colnames(samples))
 if (length(not_found) > 0) {
   stop("Design columns missing from the samplesheet: ", paste(not_found, collapse = ", "))
 }
-# Text columns (like batch) become factors; numeric columns (like RIN) stay numeric covariates.
+# Covariates: text (like batch "A"/"B") becomes a factor; real numbers (like RIN) stay numeric.
+# A column of a few whole numbers (batch coded 1/2/3) is almost always labels, so it becomes a factor.
 for (v in setdiff(design_vars, "condition")) {
-  if (is.character(samples[[v]])) samples[[v]] <- factor(samples[[v]])
+  num <- suppressWarnings(as.numeric(samples[[v]]))
+  if (anyNA(num)) {
+    samples[[v]] <- factor(samples[[v]])
+  } else if (all(num == round(num)) && length(unique(num)) <= 5) {
+    samples[[v]] <- factor(samples[[v]])
+    report_warnings <- c(report_warnings, sprintf(
+      "Column '%s' has only %d whole-number values (%s), so it was treated as labels (like batches), not as a continuous number. Use text labels (e.g. b1, b2) to avoid this note.",
+      v, length(unique(num)), paste(sort(unique(num)), collapse = ", ")))
+  } else {
+    samples[[v]] <- num
+  }
 }
 
 # Check 1: can the design be estimated? A batch that lines up exactly with condition
@@ -429,17 +441,30 @@ if (can_test) {
 ```{r go-enrichment, results = "asis", fig.width = 9, fig.height = 9}
 # Over-representation of GO terms (BP, MF, CC) among DESeq2 significant genes,
 # up- and down-regulated separately. Background = all genes that passed filtering.
+# GENCODE IDs carry a version (ENSG00000141510.18); the GO databases use the bare ID.
 orgdb <- switch(params$genome, GRCh38 = "org.Hs.eg.db", GRCm39 = "org.Mm.eg.db", NULL)
 go_enabled <- can_test && !isTRUE(params$skip_enrichment) && !is.null(orgdb)
+strip_version <- function(ids) sub("\\.[0-9]+$", "", ids)
+universe_ids <- strip_version(rownames(counts_f))
+ids_match <- TRUE
+if (go_enabled) {
+  # If almost no gene IDs are known to the database, --genome probably doesn't match the reference.
+  known <- AnnotationDbi::keys(getExportedValue(orgdb, orgdb), keytype = "ENSEMBL")
+  n_found <- sum(universe_ids %in% known)
+  cat(sprintf("%d of %d tested genes were found in %s.\n\n", n_found, length(universe_ids), orgdb))
+  ids_match <- n_found >= 0.1 * length(universe_ids)
+}
 run_go <- function(genes) {
   if (length(genes) < MIN_GO_GENES) return(NULL)
   ego <- tryCatch(
-    clusterProfiler::enrichGO(genes, OrgDb = orgdb, keyType = "ENSEMBL", ont = "ALL",
-                              universe = rownames(counts_f), pvalueCutoff = 0.05, readable = TRUE),
+    clusterProfiler::enrichGO(strip_version(genes), OrgDb = orgdb, keyType = "ENSEMBL", ont = "ALL",
+                              universe = universe_ids, pvalueCutoff = 0.05, readable = TRUE),
     error = function(e) NULL)
   if (is.null(ego) || nrow(as.data.frame(ego)) == 0) NULL else ego
 }
-if (!go_enabled) {
+if (go_enabled && !ids_match) {
+  cat(sprintf("**Gene IDs do not match %s**, so GO enrichment was skipped. Check that --genome matches your reference (GRCh38 = human, GRCm39 = mouse).\n", orgdb))
+} else if (!go_enabled) {
   cat(if (isTRUE(params$skip_enrichment)) "GO enrichment was skipped (--skip_enrichment).\n"
       else if (is.null(orgdb)) "GO enrichment is only available for GRCh38 and GRCm39.\n"
       else "Differential expression was skipped, so there is nothing to test.\n")

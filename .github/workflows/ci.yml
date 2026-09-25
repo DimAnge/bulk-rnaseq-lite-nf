@@ -25,6 +25,10 @@ jobs:
         run: nextflow run main.nf -profile test,docker
       - name: Check results against simulated truth
         run: python3 tests/check_results.py
+      - name: Report edge cases (numeric IDs, versioned IDs, confounded batch, nothing significant)
+        run: python3 tests/report_edge.py
+      - name: Custom-reference index cache and STAR memory
+        run: bash tests/reference_cache.sh
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v4

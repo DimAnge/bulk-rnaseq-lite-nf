@@ -133,6 +133,9 @@ def checkContrasts(List levels) {
         if (parts.size() != 2 || !(parts[0] in levels) || !(parts[1] in levels)) {
             error("Contrast '${c}' is not valid. Write LEVEL_vs_LEVEL using: ${levels.join(', ')}")
         }
+        if (parts[0] == parts[1]) {
+            error("Contrast '${c}' compares a condition with itself")
+        }
     }
 }
 
@@ -142,6 +145,16 @@ def checkContrasts(List levels) {
 
 def genomeCache() {
     return params.genome_cache ?: "${System.getenv('HOME')}/.rnaseq-refs"
+}
+
+// Index cache for a custom --fasta/--gtf. File name + size identify the reference, so a
+// different or edited FASTA/GTF gets its own index instead of silently reusing an old one.
+def customCacheDir() {
+    def id = [params.fasta, params.gtf].findAll { p -> p }.collect { p ->
+        def f = file(p)
+        "${f.simpleName}-${f.size()}"
+    }.join('_')
+    return "${params.outdir}/reference/${id}"
 }
 
 def ensemblUrls(String genome, release) {
@@ -172,9 +185,9 @@ workflow {
     }
 
     // ---- Reference genome ------------------------------------------------
-    // Ensembl downloads live in the shared cache; indexes for custom FASTA/GTF live in <outdir>/reference.
+    // Ensembl downloads live in the shared cache; indexes for custom FASTA/GTF live in <outdir>/reference/<id>.
     def cache_dir = params.gtf
-        ? "${params.outdir}/reference"
+        ? customCacheDir()
         : "${genomeCache()}/${params.genome}/ensembl_${params.ensembl_release}"
     def fasta = channel.empty()
     def gtf = channel.empty()

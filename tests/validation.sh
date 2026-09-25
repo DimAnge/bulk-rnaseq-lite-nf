@@ -69,6 +69,7 @@ expect_error "column(s) not in the samplesheet: batch2"     --input "$TMP/ok.csv
 expect_error "--design must end with 'condition'"           --input "$TMP/ok.csv" --design '~ condition + batch'
 expect_error "interaction terms"                            --input "$TMP/ok.csv" --design '~ batch * condition'
 expect_error "Contrast 'treated_vs_ctrl' is not valid"      --input "$TMP/ok.csv" --contrasts treated_vs_ctrl
+expect_error "compares a condition with itself"             --input "$TMP/ok.csv" --contrasts control_vs_control
 expect_error "--padj_cutoff must be between 0 and 1"        --input "$TMP/ok.csv" --padj_cutoff 5
 
 expect_ok "valid samplesheet"            --input "$TMP/ok.csv" --design '~ batch + condition' --contrasts treated_vs_control

@@ -6,7 +6,7 @@ A compact Nextflow pipeline for bulk RNA-seq: raw FASTQ files in, gene counts,
 differential expression (DESeq2 **and** edgeR), GO enrichment and one HTML report out.
 
 Built for lab use and as a learning resource for Nextflow: every step is one short,
-commented file in `modules/`, and `main.nf` reads top to bottom.
+commented file in `modules/`, and `main.nf` reads top to bottom. nf-core/rnaseq was used as reference
 
 ## What it does
 
@@ -40,7 +40,8 @@ nextflow run main.nf -profile docker --input samplesheet.csv --genome GRCh38
 ```
 
 The first real run for a genome downloads it (~1 GB) and builds the STAR index
-(~30 GB disk, ~1 h, ~32 GB RAM) into `~/.rnaseq-refs/`. Later runs reuse it.
+(~30 GB disk, ~1 h, more than 32 GB RAM) into `~/.rnaseq-refs/`. Later runs reuse it.
+Tell the pipeline how much memory it may use: `--max_memory 60.GB` (a little below the machine's RAM).
 On a machine with ~16 GB RAM add the low-memory profile: `-profile docker,low_memory`.
 
 ## Samplesheet

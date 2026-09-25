@@ -24,7 +24,7 @@ nextflow run main.nf -profile docker -params-file params.yaml -resume
 | `fastq_1` | yes | Read 1 (or the only read), gzipped: `.fastq.gz` / `.fq.gz` |
 | `fastq_2` | no | Read 2; leave empty for single-end |
 | `condition` | yes | Group to compare. Starts with a letter; letters, digits, `_`, `.` only; must not contain `_vs_` |
-| any other | no | e.g. `batch`, `donor`, `RIN`; usable in `--design` |
+| any other | no | e.g. `batch`, `donor`, `RIN`; usable in `--design`. Text becomes groups; decimal numbers (RIN) a continuous covariate; up to 5 whole numbers (batch 1/2/3) are treated as groups |
 
 Relative FASTQ paths are read relative to the samplesheet's folder. Files saved from Excel are fine.
 The first condition that appears is the reference level.
@@ -50,7 +50,7 @@ The first condition that appears is the reference level.
 | `--lfc_cutoff` | `0.58` | Absolute log2 fold-change cutoff (0.58 ≈ 1.5-fold) |
 | `--skip_enrichment` | `false` | Skip GO enrichment |
 | `--max_cpus` | `8` | No task uses more CPUs than this |
-| `--max_memory` | `32.GB` | No task uses more memory than this |
+| `--max_memory` | `32.GB` | No task uses more memory than this. Set it a little **below** your machine's RAM (e.g. `60.GB` on a 64 GB server) |
 
 ## Profiles
 
@@ -77,8 +77,12 @@ so this happens **once per genome and release**. One-time cost for human: ~1 GB 
 To share one cache between users on a server, point everyone at the same folder:
 `--genome_cache /shared/refs/rnaseq`.
 
-With `--fasta` and `--gtf` the index is built into `<outdir>/reference/`. Reuse it in later runs
-with `--star_index <outdir>/reference/star_index --gtf <your.gtf>`.
+With `--fasta` and `--gtf` the index is built into `<outdir>/reference/<fasta>-<size>_<gtf>-<size>/`,
+so a different or edited FASTA/GTF always gets its own index. Reuse it in later runs with
+`--star_index <that folder>/star_index --gtf <your.gtf>`.
+
+`--genome` also picks the GO database when you give `--fasta`/`--gtf`: keep `--genome GRCm39` for a
+custom mouse reference. GENCODE GTFs (versioned IDs like `ENSG00000141510.18`) work too.
 
 ## Strandedness
 
@@ -125,7 +129,10 @@ The report is written to `report/rnaseq_report.html` and tables to `report/table
 | `Strandedness is ambiguous` / `Samples disagree` | Mixed library types or odd data. Check `results/star/strandedness_mqc.tsv`; set `--strandedness` if you know the kit. |
 | Low "% assigned to genes" warning | Wrong strandedness (try another `--strandedness`), or a GTF that doesn't match the genome. |
 | Low "% uniquely mapped" | Wrong species, contamination or rRNA; look at FastQC/MultiQC. |
-| STAR killed / exit 137 | Not enough RAM. Use `-profile docker,low_memory` or a bigger machine; lower `--max_cpus` if many STAR jobs run at once. |
+| STAR killed / exit 137 | Not enough RAM. The automatic retry can't go above `--max_memory`, so raise `--max_memory` (if the machine has more RAM) or use `-profile docker,low_memory`. |
+| `Process requirement exceeds available memory` | A "32 GB" machine reports slightly less than 32 GB. Human/mouse STAR needs ~32 GB: use a bigger machine or `-profile docker,low_memory`. |
+| Report: note that a column "was treated as labels" | A covariate like batch was coded 1/2/3. That's handled; use text labels (b1, b2) to silence the note. |
+| Report: "Gene IDs do not match org.Mm.eg.db / org.Hs.eg.db" | `--genome` doesn't match your reference species. Rerun with the right `--genome` (only the report reruns with `-resume`). |
 | `--quantMode GeneCounts` error with `--star_index` | The index was built without a GTF. Rebuild it (drop `--star_index`). |
 | Docker permission denied | Add your user to the `docker` group or ask your admin. |
 | `Unable to find image 'bulk-rnaseq-lite-report:1.0'` | Build it: `docker build -t bulk-rnaseq-lite-report:1.0 docker/`. |
