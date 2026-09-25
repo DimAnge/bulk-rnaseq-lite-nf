@@ -1,5 +1,7 @@
 # bulk-rnaseq-lite-nf
 
+[![CI](https://github.com/DimAnge/bulk-rnaseq-lite-nf/actions/workflows/ci.yml/badge.svg)](https://github.com/DimAnge/bulk-rnaseq-lite-nf/actions/workflows/ci.yml)
+
 A compact Nextflow pipeline for bulk RNA-seq: raw FASTQ files in, gene counts,
 differential expression (DESeq2 **and** edgeR), GO enrichment and one HTML report out.
 
