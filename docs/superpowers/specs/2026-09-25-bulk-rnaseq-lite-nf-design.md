@@ -1,7 +1,7 @@
 # bulk-rnaseq-lite-nf — Design
 
 Date: 2026-09-25
-Status: draft, awaiting review
+Status: reviewed, round 1 changes applied
 
 ## Purpose
 
@@ -119,7 +119,7 @@ Set in `params.yaml` (`-params-file`) or on the command line; command line wins.
 | `design` | `~ condition` | e.g. `~ batch + condition`; last term must be `condition` |
 | `contrasts` | null | `"treated_vs_control,KO_vs_WT"`; null → every level vs the first level |
 | `padj_cutoff` | `0.05` | both methods |
-| `lfc_cutoff` | `1` | log2, both methods |
+| `lfc_cutoff` | `0.58` | log2 (≈1.5-fold), both methods |
 | `skip_trimming` | false | |
 | `skip_enrichment` | false | |
 | `outdir` | `results` | |
@@ -155,9 +155,12 @@ No SLURM profile in v1; adding one later is a single profile block.
 
 STAR `ReadsPerGene.out.tab` columns 2/3/4 = unstranded / forward / reverse counts.
 
-- Column 3 total ≫ column 4 → `forward`; column 4 ≫ column 3 → `reverse`;
-  otherwise → `unstranded`. "≫" means ratio ≥ 0.8 of assigned reads in one direction
-  (threshold as a named constant in `bin/infer_strand`).
+- Fraction = forward / (forward + reverse) using column 3 and 4 totals (gene rows only).
+  - ≥ 0.8 → `forward`; ≤ 0.2 → `reverse` (stranded).
+  - 0.4–0.6 → `unstranded` (random orientation, ~50/50).
+  - Anything else (0.2–0.4 or 0.6–0.8) → ambiguous: pipeline stops and asks for an
+    explicit `--strandedness`, printing per-sample fractions.
+  - Thresholds are named constants in `bin/infer_strand`.
 - Mapped to featureCounts `-s 1 / 2 / 0`.
 - Detected value is written to the report and MultiQC.
 - Explicit `--strandedness` skips detection.
@@ -181,7 +184,8 @@ Every chunk opens with a plain-English comment explaining what it does and why.
 
 Sections:
 
-1. **Run summary** — parameters, tool versions, sample table.
+1. **Run summary** — parameters, genome + Ensembl release used, detected strandedness,
+   tool versions, sample table.
 2. **Upstream QC** — per-sample raw reads, % retained after fastp, % uniquely mapped,
    % assigned by featureCounts; low values flagged. Link to MultiQC.
 3. **Count QC** — library sizes, genes detected, log-CPM distributions, genes removed by
@@ -194,7 +198,8 @@ Sections:
    searchable `DT` table.
 6. **DESeq2 vs edgeR concordance** — overlap of significant genes, log2FC scatter.
 7. **GO enrichment** (unless skipped) — clusterProfiler `enrichGO` (BP/MF/CC) on DESeq2
-   significant genes, up and down separately; dot plots + tables. Background = all
+   significant genes only (padj < `padj_cutoff` and |log2FC| > `lfc_cutoff`), up and down
+   separately; dot plots + tables. Background = all
    genes after filtering.
 8. **Exports** — list of written CSVs.
 
