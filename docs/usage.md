@@ -74,8 +74,14 @@ Nextflow checks this folder first and skips the download/index steps if the file
 so this happens **once per genome and release**. One-time cost for human: ~1 GB download,
 ~30 GB disk, ~1 h and ~32 GB RAM for the full index (~16 GB for the sparse one).
 
-To share one cache between users on a server, point everyone at the same folder:
-`--genome_cache /shared/refs/rnaseq`.
+**Put the cache on a big disk.** Human needs ~35 GB (genome + index), and HPC home folders often
+have small quotas. Use a project/scratch disk: `--genome_cache /data/refs/rnaseq`. To share one cache
+between users, point everyone at the same folder. If a run ever died from a full disk while writing
+the index, delete that partial `star_index*/` folder before rerunning, or it will be reused as if complete.
+
+The index is not rebuilt when you change `--read_length`: the default (100) works well for any read length.
+`-profile low_memory` needs the sparse index (`star_index_sparse3/`); with `--star_index` pointing at a
+full index, alignment needs ~32 GB regardless.
 
 With `--fasta` and `--gtf` the index is built into `<outdir>/reference/<fasta>-<size>_<gtf>-<size>/`,
 so a different or edited FASTA/GTF always gets its own index. Reuse it in later runs with
@@ -135,4 +141,6 @@ The report is written to `report/rnaseq_report.html` and tables to `report/table
 | Report: "Gene IDs do not match org.Mm.eg.db / org.Hs.eg.db" | `--genome` doesn't match your reference species. Rerun with the right `--genome` (only the report reruns with `-resume`). |
 | `--quantMode GeneCounts` error with `--star_index` | The index was built without a GTF. Rebuild it (drop `--star_index`). |
 | Docker permission denied | Add your user to the `docker` group or ask your admin. |
+| Download fails (`urlopen error`) on a server behind a proxy | Export `https_proxy`/`http_proxy` in your shell before running; the docker profile passes them into containers. |
+| `Samplesheet columns are separated by semicolons` | Excel with a European locale. Save as "CSV UTF-8 (Comma delimited)". |
 | `Unable to find image 'bulk-rnaseq-lite-report:1.0'` | Build it: `docker build -t bulk-rnaseq-lite-report:1.0 docker/`. |

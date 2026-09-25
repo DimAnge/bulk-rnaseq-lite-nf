@@ -47,6 +47,8 @@ sheet plain_fastq "$HEADER" "$OK1" "trt_1,$READS/trt_1/R1.fastq,,treated,A"
 sheet one_condition "$HEADER" "$OK1" "$OK3"
 sheet bad_level "$HEADER" "$OK1" "trt_1,$READS/trt_1/R1.fastq.gz,,KO-1,A"
 sheet empty_batch "$HEADER" "$OK1" "$OK2" "ctrl_2,$READS/ctrl_2/R1.fastq.gz,,control,"
+sheet semicolon "sample;fastq_1;fastq_2;condition;batch" "ctrl_1;$READS/ctrl_1/R1.fastq.gz;;control;A"
+sheet blank_rows "$HEADER" "$OK1" "$OK2" ",,,," ",,,,"
 # Excel-style: UTF-8 BOM + CRLF line endings
 printf '\xef\xbb\xbf%s\r\n%s\r\n%s\r\n' "$HEADER" "$OK1" "$OK2" > "$TMP/bom_crlf.csv"
 # Relative paths resolve against the samplesheet's own folder
@@ -70,10 +72,12 @@ expect_error "--design must end with 'condition'"           --input "$TMP/ok.csv
 expect_error "interaction terms"                            --input "$TMP/ok.csv" --design '~ batch * condition'
 expect_error "Contrast 'treated_vs_ctrl' is not valid"      --input "$TMP/ok.csv" --contrasts treated_vs_ctrl
 expect_error "compares a condition with itself"             --input "$TMP/ok.csv" --contrasts control_vs_control
+expect_error "separated by semicolons"                      --input "$TMP/semicolon.csv"
 expect_error "--padj_cutoff must be between 0 and 1"        --input "$TMP/ok.csv" --padj_cutoff 5
 
 expect_ok "valid samplesheet"            --input "$TMP/ok.csv" --design '~ batch + condition' --contrasts treated_vs_control
 expect_ok "Excel BOM + CRLF samplesheet" --input "$TMP/bom_crlf.csv" --design '~ batch + condition'
+expect_ok "blank trailing rows (Excel)"  --input "$TMP/blank_rows.csv"
 expect_ok "relative FASTQ paths"         --input "$TMP/rel/relative.csv"
 expect_ok "test profile"                 -profile test
 expect_ok "mouse genome"                 --input "$TMP/ok.csv" --genome GRCm39

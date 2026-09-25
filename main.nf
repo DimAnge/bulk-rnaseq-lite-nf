@@ -66,12 +66,15 @@ def readSamplesheet(String path) {
     }
     // Trim keys and values; drop the invisible BOM that Excel adds to the first header.
     def rows = sheet.splitCsv(header: true).collect { row ->
-        row.collectEntries { k, v -> [k.replace('﻿', '').trim(), (v ?: '').trim()] }
-    }
+        row.collectEntries { k, v -> [k.replace('\uFEFF', '').trim(), (v ?: '').trim()] }
+    }.findAll { row -> row.values().any { v -> v } }   // drop blank rows Excel leaves at the end
     if (!rows) {
         error("Samplesheet ${path} has no samples")
     }
     def missing = ['sample', 'fastq_1', 'condition'].findAll { c -> !rows[0].containsKey(c) }
+    if (missing && rows[0].keySet().any { k -> k.contains(';') }) {
+        error("Samplesheet columns are separated by semicolons. Save it as comma-separated CSV (in Excel: 'CSV UTF-8 (Comma delimited)')")
+    }
     if (missing) {
         error("Samplesheet is missing required column(s): ${missing.join(', ')}")
     }
