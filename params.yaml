@@ -1,0 +1,21 @@
+# Example run configuration. Copy it, edit it, then run:
+#   nextflow run main.nf -profile docker -params-file params.yaml
+# Anything given on the command line (--name value) overrides this file.
+
+input: samplesheet.csv       # required: see docs/usage.md#samplesheet
+outdir: results
+
+genome: GRCh38               # GRCh38 (human) or GRCm39 (mouse)
+ensembl_release: 112
+
+strandedness: auto           # auto | forward | reverse | unstranded
+read_length: 100             # used for the STAR index; 100 works for most data
+
+design: "~ condition"        # e.g. "~ batch + condition"
+contrasts: null              # e.g. "treated_vs_control,KO_vs_WT"; null = every condition vs the first
+padj_cutoff: 0.05
+lfc_cutoff: 0.58             # log2 fold change; 0.58 ~ 1.5-fold
+
+skip_trimming: false
+skip_enrichment: false
+save_bam: false
