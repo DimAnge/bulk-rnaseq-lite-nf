@@ -1,0 +1,71 @@
+## `r cn`
+
+```{r}
+# Number of significant genes per method and direction.
+r <- de[[cn]]
+n_sig <- sapply(r[c("deseq2", "edger")], function(x) c(
+  up = sum(x$significant & x$log2FC > 0), down = sum(x$significant & x$log2FC < 0)))
+knitr::kable(n_sig, col.names = c("DESeq2", "edgeR"))
+```
+
+Significant = padj < `r params$padj_cutoff` and |log2FC| > `r params$lfc_cutoff`. Positive log2FC = higher in **`r contrast_list[[cn]][1]`** than in **`r contrast_list[[cn]][2]`**.
+
+```{r, fig.width = 10, fig.height = 4}
+# MA plot: mean expression (x) against fold change (y). Red = significant.
+# DESeq2 shows apeglm-shrunk fold changes, which pull noisy low-count genes towards 0.
+ma <- rbind(
+  data.frame(method = "DESeq2 (shrunk log2FC)", mean_expr = log10(r$deseq2$baseMean + 1),
+             log2FC = r$deseq2$log2FC_shrunk, significant = r$deseq2$significant),
+  data.frame(method = "edgeR", mean_expr = r$edger$logCPM,
+             log2FC = r$edger$log2FC, significant = r$edger$significant))
+ggplot(ma, aes(mean_expr, log2FC, colour = significant)) +
+  geom_point(size = 0.8, alpha = 0.6) + geom_hline(yintercept = 0) +
+  scale_colour_manual(values = c(`FALSE` = "grey60", `TRUE` = "firebrick")) +
+  facet_wrap(~ method, scales = "free_x") +
+  labs(x = "Mean expression (DESeq2: log10 baseMean, edgeR: logCPM)", y = "log2 fold change")
+```
+
+```{r, fig.width = 10, fig.height = 4.5}
+# Volcano plot: fold change (x) against significance (y). Top 10 genes per method are labelled.
+cols <- c("gene_name", "log2FC", "pvalue", "padj", "significant")
+volcano <- rbind(cbind(method = "DESeq2", r$deseq2[, cols]), cbind(method = "edgeR", r$edger[, cols]))
+volcano <- volcano[!is.na(volcano$pvalue), ]
+labels <- do.call(rbind, lapply(split(volcano, volcano$method), function(x) {
+  s <- x[x$significant, ]
+  head(s[order(s$padj), ], 10)
+}))
+ggplot(volcano, aes(log2FC, -log10(pvalue), colour = significant)) +
+  geom_point(size = 0.8, alpha = 0.6) +
+  geom_vline(xintercept = c(-1, 1) * params$lfc_cutoff, linetype = "dashed") +
+  geom_text(data = labels, aes(label = gene_name), size = 3, vjust = -0.6, colour = "black", check_overlap = TRUE) +
+  scale_colour_manual(values = c(`FALSE` = "grey60", `TRUE` = "firebrick")) +
+  facet_wrap(~ method)
+```
+
+```{r, fig.height = 7}
+# Heatmap of up to 50 top DESeq2 genes (row z-scores of transformed counts).
+top <- head(r$deseq2$gene_id[r$deseq2$significant], 50)
+if (length(top) > 0) top <- top[apply(vsd_mat[top, , drop = FALSE], 1, sd) > 0]  # constant rows break scaling
+if (length(top) >= 2) {
+  z <- t(scale(t(vsd_mat[top, , drop = FALSE])))
+  rownames(z) <- make.unique(unname(symbol_of[top]))
+  pheatmap(z, annotation_col = samples[, design_vars, drop = FALSE], fontsize_row = 7,
+           main = paste("Top significant genes:", cn))
+} else {
+  cat("Fewer than 2 significant genes, so no heatmap.\n")
+}
+```
+
+```{r}
+# DESeq2 results (top 1000 by padj; the full table is in tables/).
+DT::formatSignif(DT::datatable(head(r$deseq2, 1000), rownames = FALSE, filter = "top",
+                               caption = "DESeq2 results"),
+                 c("baseMean", "log2FC", "log2FC_shrunk", "pvalue", "padj"), 3)
+```
+
+```{r}
+# edgeR results (top 1000 by padj; the full table is in tables/).
+DT::formatSignif(DT::datatable(head(r$edger, 1000), rownames = FALSE, filter = "top",
+                               caption = "edgeR results"),
+                 c("logCPM", "log2FC", "pvalue", "padj"), 3)
+```

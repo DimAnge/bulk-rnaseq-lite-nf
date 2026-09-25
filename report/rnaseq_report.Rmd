@@ -1,0 +1,479 @@
+---
+title: "Bulk RNA-seq report"
+date: "`r format(Sys.time(), '%Y-%m-%d %H:%M')`"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 2
+    code_folding: hide
+    self_contained: true
+params:
+  counts: "../results/featurecounts/counts.tsv"
+  samplesheet: "../results/pipeline_info/samplesheet.csv"
+  gene_names: "../results/featurecounts/gene_names.tsv"
+  qc_summary: "../results/qc/qc_summary.tsv"
+  strand_report: "../results/star/strandedness_mqc.tsv"
+  versions: "../results/pipeline_info/versions.tsv"
+  multiqc_link: "../results/multiqc/multiqc_report.html"
+  design: "~ condition"
+  contrasts: ""
+  padj_cutoff: 0.05
+  lfc_cutoff: 0.58
+  genome: "GRCh38"
+  ensembl_release: "112"
+  strandedness: "auto"
+  skip_enrichment: false
+  tables_dir: "tables"
+---
+
+```{r setup, include = FALSE}
+# HOW TO RUN THIS REPORT WITHOUT NEXTFLOW
+#   1. Open this file in RStudio (or use the Docker image, see docs/usage.md).
+#   2. Check the paths under `params:` above point at your pipeline results folder.
+#      The defaults work when results/ sits next to the report/ folder.
+#   3. Change what you need (contrasts, cutoffs, design) and click "Knit".
+#   From R instead:
+#     rmarkdown::render("rnaseq_report.Rmd", params = list(contrasts = "treated_vs_control"))
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE, fig.width = 7, fig.height = 4.5)
+suppressPackageStartupMessages({
+  library(DESeq2)
+  library(edgeR)
+  library(limma)
+  library(ggplot2)
+  library(pheatmap)
+  library(DT)
+})
+theme_set(theme_bw())
+
+# Thresholds used for QC flags and GO. Change them here if your data need it.
+MIN_PCT_UNIQUE   <- 60  # % uniquely mapped reads below this is flagged
+MIN_PCT_ASSIGNED <- 50  # % reads assigned to genes below this is flagged
+MIN_GO_GENES     <- 5   # fewer significant genes than this: skip GO for that list
+REPORT_DIR <- dirname(knitr::current_input(dir = TRUE))
+```
+
+This report was made by **bulk-rnaseq-lite-nf**. Click a **Code** button to see the R code behind any result.
+
+# Warnings and checks
+
+```{r load-data}
+# Read the count matrix: one row per gene, one column per sample.
+counts_df <- read.delim(params$counts, check.names = FALSE)
+counts <- as.matrix(counts_df[, -1, drop = FALSE])
+rownames(counts) <- counts_df$gene_id
+
+# Read the samplesheet and put its rows in the same order as the count columns.
+samples <- read.csv(params$samplesheet, stringsAsFactors = FALSE, check.names = FALSE,
+                    fileEncoding = "UTF-8-BOM", strip.white = TRUE)
+missing_samples <- setdiff(colnames(counts), samples$sample)
+if (length(missing_samples) > 0) {
+  stop("These count columns are not in the samplesheet: ", paste(missing_samples, collapse = ", "))
+}
+# Condition levels keep the samplesheet order; the first one is the reference.
+condition_levels <- unique(samples$condition)
+samples <- samples[match(colnames(counts), samples$sample), , drop = FALSE]
+rownames(samples) <- samples$sample
+samples$condition <- factor(samples$condition,
+                            levels = condition_levels[condition_levels %in% samples$condition])
+
+# Gene symbols (from the GTF), QC numbers and tool versions written by the pipeline.
+gene_names <- read.delim(params$gene_names)
+symbol_of <- setNames(gene_names$gene_name, gene_names$gene_id)
+qc <- read.delim(params$qc_summary, check.names = FALSE, na.strings = "NA")
+versions <- if (file.exists(params$versions)) {
+  read.delim(params$versions, header = FALSE, col.names = c("tool", "version"))
+}
+strand_tab <- if (file.exists(params$strand_report) && basename(params$strand_report) != "NO_FILE") {
+  read.delim(params$strand_report, comment.char = "#")
+}
+strand_used <- if (!is.null(strand_tab)) {
+  paste(unique(strand_tab$call), "(auto-detected)")
+} else {
+  paste(params$strandedness, "(set by user)")
+}
+```
+
+```{r checks}
+report_warnings <- character()
+
+# Condition names must be valid R names so DESeq2/edgeR can name coefficients.
+lv <- levels(samples$condition)
+if (any(make.names(lv) != lv)) {
+  stop("Condition values must start with a letter and use only letters, digits, '.' or '_': ",
+       paste(lv, collapse = ", "))
+}
+
+# Turn the design text (e.g. "~ batch + condition") into a list of columns.
+design_vars <- trimws(strsplit(sub("^\\s*~", "", params$design), "+", fixed = TRUE)[[1]])
+design_vars <- design_vars[nzchar(design_vars)]
+if (length(design_vars) == 0 || tail(design_vars, 1) != "condition") {
+  stop("The design must end with 'condition', e.g. '~ batch + condition'.")
+}
+not_found <- setdiff(design_vars, colnames(samples))
+if (length(not_found) > 0) {
+  stop("Design columns missing from the samplesheet: ", paste(not_found, collapse = ", "))
+}
+# Text columns (like batch) become factors; numeric columns (like RIN) stay numeric covariates.
+for (v in setdiff(design_vars, "condition")) {
+  if (is.character(samples[[v]])) samples[[v]] <- factor(samples[[v]])
+}
+
+# Check 1: can the design be estimated? A batch that lines up exactly with condition
+# cannot be separated from it, so we fall back to '~ condition'.
+mm <- model.matrix(as.formula(paste("~", paste(design_vars, collapse = " + "))), samples)
+if (qr(mm)$rank < ncol(mm)) {
+  report_warnings <- c(report_warnings, sprintf(
+    "The design '%s' cannot be estimated (a covariate is confounded with condition). It was replaced by '~ condition'.",
+    params$design))
+  design_vars <- "condition"
+  mm <- model.matrix(~ condition, samples)
+}
+design_formula <- as.formula(paste("~", paste(design_vars, collapse = " + ")))
+
+# Check 2: replicates per group.
+reps <- table(samples$condition)
+if (any(reps < 2)) {
+  report_warnings <- c(report_warnings, sprintf(
+    "Groups with fewer than 2 replicates: %s. Their results are unreliable.",
+    paste(names(reps)[reps < 2], collapse = ", ")))
+}
+
+# Check 3: testing needs more samples than model coefficients.
+can_test <- nrow(mm) > ncol(mm)
+if (!can_test) {
+  report_warnings <- c(report_warnings,
+    "Not enough samples to estimate variability (no residual degrees of freedom). Differential expression was skipped.")
+}
+
+# Check 4: low assignment usually means wrong strandedness or annotation.
+low_assigned <- qc$sample[!is.na(qc$pct_assigned) & qc$pct_assigned < MIN_PCT_ASSIGNED]
+if (length(low_assigned) > 0) {
+  report_warnings <- c(report_warnings, sprintf(
+    "Less than %d%% of reads were assigned to genes in: %s. Check strandedness and annotation.",
+    MIN_PCT_ASSIGNED, paste(low_assigned, collapse = ", ")))
+}
+
+# Remove genes with too few counts to test. filterByExpr keeps genes with enough
+# counts in at least as many samples as the smallest group.
+y_all <- DGEList(counts)
+keep <- filterByExpr(y_all, group = samples$condition)
+counts_f <- counts[keep, , drop = FALSE]
+if (sum(keep) < 2) {
+  can_test <- FALSE
+  report_warnings <- c(report_warnings, "Fewer than 2 genes passed filtering. Differential expression was skipped.")
+}
+
+# Contrasts: "A_vs_B" compares A with B (positive log2FC = higher in A).
+# Empty = every condition against the first (reference) condition.
+contrast_list <- if (is.null(params$contrasts) || !nzchar(params$contrasts)) {
+  lapply(lv[-1], function(l) c(l, lv[1]))
+} else {
+  lapply(trimws(strsplit(params$contrasts, ",")[[1]]), function(x) {
+    ab <- strsplit(x, "_vs_", fixed = TRUE)[[1]]
+    if (length(ab) != 2 || !all(ab %in% lv)) {
+      stop(sprintf("Contrast '%s' is not valid. Write LEVEL_vs_LEVEL using: %s", x, paste(lv, collapse = ", ")))
+    }
+    ab
+  })
+}
+names(contrast_list) <- vapply(contrast_list, paste, character(1), collapse = "_vs_")
+```
+
+```{r show-warnings, echo = FALSE, results = "asis"}
+if (length(report_warnings) > 0) {
+  cat(paste0("> **Warning:** ", report_warnings, collapse = "\n>\n"), "\n")
+} else {
+  cat("All checks passed.\n")
+}
+```
+
+# 1. Run summary
+
+```{r run-summary}
+# The settings this report was made with.
+run_info <- data.frame(
+  setting = c("Genome", "Ensembl release", "Strandedness", "Design (used)", "Contrasts",
+              "padj cutoff", "|log2FC| cutoff", "GO enrichment"),
+  value = c(params$genome, as.character(params$ensembl_release), strand_used,
+            paste(deparse(design_formula), collapse = ""), paste(names(contrast_list), collapse = ", "),
+            params$padj_cutoff, params$lfc_cutoff,
+            if (isTRUE(params$skip_enrichment)) "skipped" else "GO BP/MF/CC (DESeq2 significant genes)"))
+knitr::kable(run_info)
+```
+
+```{r versions}
+# Tool versions (container images) used by the pipeline.
+if (!is.null(versions)) knitr::kable(versions)
+```
+
+```{r sample-table}
+# The samples and their design columns.
+knitr::kable(samples[, setdiff(colnames(samples), c("fastq_1", "fastq_2")), drop = FALSE], row.names = FALSE)
+```
+
+# 2. Upstream QC
+
+Detailed per-tool plots are in the [MultiQC report](`r params$multiqc_link`).
+
+```{r qc-table}
+# One row per sample. Flagged: uniquely mapped < MIN_PCT_UNIQUE % or assigned < MIN_PCT_ASSIGNED %.
+qc$flag <- ifelse((!is.na(qc$pct_uniquely_mapped) & qc$pct_uniquely_mapped < MIN_PCT_UNIQUE) |
+                  (!is.na(qc$pct_assigned) & qc$pct_assigned < MIN_PCT_ASSIGNED), "CHECK", "")
+knitr::kable(qc, digits = 1, row.names = FALSE)
+```
+
+```{r qc-plot, fig.height = 0.4 * nrow(qc) + 2}
+# Mapping and gene-assignment rates. Dashed lines are the flag thresholds.
+qc_long <- rbind(
+  data.frame(sample = qc$sample, metric = "% uniquely mapped", value = qc$pct_uniquely_mapped),
+  data.frame(sample = qc$sample, metric = "% assigned to genes", value = qc$pct_assigned))
+ggplot(qc_long, aes(sample, value, fill = metric)) +
+  geom_col(position = "dodge") +
+  geom_hline(yintercept = c(MIN_PCT_UNIQUE, MIN_PCT_ASSIGNED), linetype = "dashed") +
+  coord_flip() + labs(x = NULL, y = "%", fill = NULL)
+```
+
+```{r strand-table}
+# Strandedness per sample (auto mode only): forward fraction ~0.5 unstranded, high forward, low reverse.
+if (!is.null(strand_tab)) knitr::kable(strand_tab, row.names = FALSE)
+```
+
+# 3. Count QC
+
+```{r library-sizes, fig.height = 0.4 * ncol(counts) + 2}
+# Library size (reads counted on genes) and number of genes with at least one read.
+lib <- data.frame(sample = colnames(counts), million_reads = colSums(counts) / 1e6,
+                  genes_detected = colSums(counts > 0), condition = samples$condition)
+ggplot(lib, aes(sample, million_reads, fill = condition)) + geom_col() + coord_flip() +
+  labs(x = NULL, y = "Million reads assigned to genes")
+ggplot(lib, aes(sample, genes_detected, fill = condition)) + geom_col() + coord_flip() +
+  labs(x = NULL, y = "Genes with at least one read")
+```
+
+```{r logcpm-distribution}
+# Distribution of log2 counts-per-million per sample. Boxes should look similar.
+logcpm <- cpm(y_all, log = TRUE)
+ggplot(data.frame(sample = rep(colnames(logcpm), each = nrow(logcpm)), value = as.vector(logcpm)),
+       aes(sample, value)) +
+  geom_boxplot(outlier.size = 0.3) + coord_flip() + labs(x = NULL, y = "log2 CPM")
+```
+
+**Gene filtering:** `r sum(keep)` of `r length(keep)` genes had enough counts to be tested (`edgeR::filterByExpr`).
+
+# 4. Sample relationships
+
+```{r transform}
+# Variance-stabilising transformation (VST) makes counts comparable across genes for
+# PCA and heatmaps. vst() needs >= 1000 genes; smaller data use the slower full version,
+# and if that fails we fall back to log2(normalised counts + 1).
+dds <- DESeqDataSetFromMatrix(counts_f, samples, design_formula)
+dds <- estimateSizeFactors(dds)
+transform_used <- "VST"
+vsd_mat <- tryCatch(
+  assay(if (nrow(dds) >= 1000) vst(dds, blind = TRUE) else varianceStabilizingTransformation(dds, blind = TRUE)),
+  error = function(e) {
+    transform_used <<- "log2(normalised counts + 1)"
+    log2(counts(dds, normalized = TRUE) + 1)
+  })
+```
+
+Transformation used for this section: **`r transform_used`**.
+
+```{r pca-function}
+# PCA on the 500 most variable genes. Colour = condition, shape = first covariate (e.g. batch).
+covariates <- setdiff(design_vars, "condition")
+plot_pca <- function(mat, title) {
+  top <- head(order(apply(mat, 1, var), decreasing = TRUE), min(500, nrow(mat)))
+  pca <- prcomp(t(mat[top, , drop = FALSE]))
+  var_pct <- 100 * pca$sdev^2 / sum(pca$sdev^2)
+  df <- cbind(as.data.frame(pca$x[, 1:2]), samples)
+  p <- ggplot(df, aes(PC1, PC2, colour = condition, label = sample)) +
+    geom_point(size = 3) +
+    geom_text(vjust = -1, size = 3, show.legend = FALSE) +
+    labs(title = title, x = sprintf("PC1 (%.1f%%)", var_pct[1]), y = sprintf("PC2 (%.1f%%)", var_pct[2]))
+  if (length(covariates) > 0 && is.factor(df[[covariates[1]]])) p <- p + aes(shape = .data[[covariates[1]]])
+  list(plot = p, var_pct = var_pct)
+}
+pca_raw <- plot_pca(vsd_mat, "PCA")
+pca_raw$plot
+```
+
+```{r scree, fig.height = 3}
+# How much variation each principal component explains.
+n_pc <- min(4, length(pca_raw$var_pct))
+ggplot(data.frame(PC = paste0("PC", seq_len(n_pc)), pct = pca_raw$var_pct[seq_len(n_pc)]), aes(PC, pct)) +
+  geom_col() + labs(x = NULL, y = "% variance explained")
+```
+
+```{r distance-heatmap, fig.height = 5}
+# Euclidean distances between samples: replicates should cluster together.
+pheatmap(as.matrix(dist(t(vsd_mat))), annotation_col = samples[, design_vars, drop = FALSE],
+         main = "Sample-to-sample distances")
+```
+
+```{r batch-corrected-pca}
+# If the design has covariates, show the PCA after removing them (for display only;
+# DE uses the covariates in the model instead of corrected values).
+if (length(covariates) > 0) {
+  factor_covs <- covariates[vapply(covariates, function(v) is.factor(samples[[v]]), logical(1))]
+  numeric_covs <- setdiff(covariates, factor_covs)
+  corrected <- removeBatchEffect(
+    vsd_mat,
+    batch = if (length(factor_covs) >= 1) samples[[factor_covs[1]]],
+    batch2 = if (length(factor_covs) >= 2) samples[[factor_covs[2]]],
+    covariates = if (length(numeric_covs) > 0) as.matrix(samples[, numeric_covs, drop = FALSE]),
+    design = model.matrix(~ condition, samples))
+  plot_pca(corrected, paste("PCA after removing", paste(covariates, collapse = " + ")))$plot
+}
+```
+
+# 5. Differential expression {.tabset}
+
+```{r differential-expression}
+# DESeq2 (Wald test, apeglm-shrunk fold changes) and edgeR (quasi-likelihood F-test)
+# run on the same filtered counts. A gene is significant when
+# padj < padj_cutoff and |log2FC| > lfc_cutoff (unshrunk log2FC, for both methods).
+is_significant <- function(x) !is.na(x$padj) & x$padj < params$padj_cutoff & abs(x$log2FC) > params$lfc_cutoff
+de <- list()
+if (can_test) {
+  dds <- DESeq(dds, quiet = TRUE)
+  # edgeR: one column per condition (~ 0 + condition + covariates), so contrasts are differences of columns.
+  mm_edger <- model.matrix(as.formula(paste(c("~ 0 + condition", covariates), collapse = " + ")), samples)
+  y <- estimateDisp(calcNormFactors(DGEList(counts_f)), mm_edger)
+  fit <- glmQLFit(y, mm_edger)
+
+  for (cn in names(contrast_list)) {
+    a <- contrast_list[[cn]][1]
+    b <- contrast_list[[cn]][2]
+    # DESeq2: make B the reference level so the coefficient is exactly "condition_A_vs_B".
+    dds_b <- dds
+    dds_b$condition <- relevel(dds_b$condition, ref = b)
+    dds_b <- nbinomWaldTest(dds_b, quiet = TRUE)
+    coef <- paste0("condition_", a, "_vs_", b)
+    res <- results(dds_b, name = coef, alpha = params$padj_cutoff)
+    shrunk <- lfcShrink(dds_b, coef = coef, res = res, type = "apeglm", quiet = TRUE)
+    d <- data.frame(gene_id = rownames(res), gene_name = unname(symbol_of[rownames(res)]),
+                    baseMean = res$baseMean, log2FC = res$log2FoldChange,
+                    log2FC_shrunk = shrunk$log2FoldChange, pvalue = res$pvalue, padj = res$padj)
+    # edgeR
+    con <- makeContrasts(contrasts = sprintf("condition%s - condition%s", a, b), levels = mm_edger)
+    tt <- topTags(glmQLFTest(fit, contrast = con), n = Inf, sort.by = "none")$table
+    e <- data.frame(gene_id = rownames(tt), gene_name = unname(symbol_of[rownames(tt)]),
+                    logCPM = tt$logCPM, log2FC = tt$logFC, pvalue = tt$PValue, padj = tt$FDR)
+    d$significant <- is_significant(d)
+    e$significant <- is_significant(e)
+    de[[cn]] <- list(deseq2 = d[order(d$padj), ], edger = e[order(e$padj), ])
+  }
+}
+
+# Save full result tables (one CSV per contrast and method).
+dir.create(params$tables_dir, showWarnings = FALSE, recursive = TRUE)
+for (cn in names(de)) {
+  write.csv(de[[cn]]$deseq2, file.path(params$tables_dir, paste0(cn, "_deseq2.csv")), row.names = FALSE)
+  write.csv(de[[cn]]$edger, file.path(params$tables_dir, paste0(cn, "_edger.csv")), row.names = FALSE)
+}
+```
+
+```{r contrast-tabs, echo = FALSE, results = "asis"}
+# One tab per contrast, built from the template in _contrast.Rmd.
+if (can_test) {
+  for (cn in names(de)) {
+    cat(knitr::knit_child(file.path(REPORT_DIR, "_contrast.Rmd"), envir = environment(), quiet = TRUE), sep = "\n")
+  }
+} else {
+  cat("Differential expression was skipped (see Warnings).\n")
+}
+```
+
+# 6. DESeq2 vs edgeR
+
+```{r concordance}
+# How well the two methods agree: overlap of significant genes and fold-change correlation.
+if (can_test) {
+  conc <- do.call(rbind, lapply(names(de), function(cn) {
+    m <- merge(de[[cn]]$deseq2[, c("gene_id", "log2FC", "significant")],
+               de[[cn]]$edger[, c("gene_id", "log2FC", "significant")],
+               by = "gene_id", suffixes = c("_deseq2", "_edger"))
+    m$contrast <- cn
+    m$category <- ifelse(m$significant_deseq2 & m$significant_edger, "both",
+                  ifelse(m$significant_deseq2, "DESeq2 only",
+                  ifelse(m$significant_edger, "edgeR only", "neither")))
+    m
+  }))
+  concordance <- do.call(rbind, lapply(split(conc, conc$contrast), function(m) data.frame(
+    contrast = m$contrast[1],
+    both = sum(m$category == "both"),
+    deseq2_only = sum(m$category == "DESeq2 only"),
+    edger_only = sum(m$category == "edgeR only"),
+    spearman_log2FC = round(cor(m$log2FC_deseq2, m$log2FC_edger, method = "spearman", use = "complete.obs"), 3))))
+  knitr::kable(concordance, row.names = FALSE)
+}
+```
+
+```{r concordance-plot, fig.width = 8}
+# Each point is a gene: DESeq2 fold change (x) against edgeR fold change (y).
+if (can_test) {
+  ggplot(conc, aes(log2FC_deseq2, log2FC_edger, colour = category)) +
+    geom_point(size = 0.8, alpha = 0.7) +
+    geom_abline(linetype = "dashed") +
+    scale_colour_manual(values = c(both = "firebrick", `DESeq2 only` = "darkorange",
+                                   `edgeR only` = "steelblue", neither = "grey70")) +
+    facet_wrap(~ contrast) +
+    labs(x = "DESeq2 log2FC", y = "edgeR log2FC", colour = NULL)
+}
+```
+
+# 7. GO enrichment
+
+```{r go-enrichment, results = "asis", fig.width = 9, fig.height = 9}
+# Over-representation of GO terms (BP, MF, CC) among DESeq2 significant genes,
+# up- and down-regulated separately. Background = all genes that passed filtering.
+orgdb <- switch(params$genome, GRCh38 = "org.Hs.eg.db", GRCm39 = "org.Mm.eg.db", NULL)
+go_enabled <- can_test && !isTRUE(params$skip_enrichment) && !is.null(orgdb)
+run_go <- function(genes) {
+  if (length(genes) < MIN_GO_GENES) return(NULL)
+  ego <- tryCatch(
+    clusterProfiler::enrichGO(genes, OrgDb = orgdb, keyType = "ENSEMBL", ont = "ALL",
+                              universe = rownames(counts_f), pvalueCutoff = 0.05, readable = TRUE),
+    error = function(e) NULL)
+  if (is.null(ego) || nrow(as.data.frame(ego)) == 0) NULL else ego
+}
+if (!go_enabled) {
+  cat(if (isTRUE(params$skip_enrichment)) "GO enrichment was skipped (--skip_enrichment).\n"
+      else if (is.null(orgdb)) "GO enrichment is only available for GRCh38 and GRCm39.\n"
+      else "Differential expression was skipped, so there is nothing to test.\n")
+} else {
+  for (cn in names(de)) {
+    d <- de[[cn]]$deseq2
+    for (direction in c("up", "down")) {
+      genes <- d$gene_id[d$significant & (if (direction == "up") d$log2FC > 0 else d$log2FC < 0)]
+      ego <- run_go(genes)
+      cat("\n\n## ", cn, ": ", direction, "-regulated (", length(genes), " genes)\n\n", sep = "")
+      if (is.null(ego)) {
+        cat("No enriched GO terms (or fewer than ", MIN_GO_GENES, " significant genes).\n\n", sep = "")
+      } else {
+        write.csv(as.data.frame(ego), file.path(params$tables_dir, paste0(cn, "_go_", direction, ".csv")), row.names = FALSE)
+        print(enrichplot::dotplot(ego, showCategory = 10, split = "ONTOLOGY", label_format = 60) +
+                facet_grid(ONTOLOGY ~ ., scales = "free_y") + ggtitle(paste(cn, direction)))
+        cat("\n\n")
+      }
+    }
+  }
+}
+```
+
+# 8. Exported files
+
+```{r exports, results = "asis"}
+# Every CSV written by this report (in the tables/ folder next to the report).
+files <- list.files(params$tables_dir)
+cat(if (length(files) > 0) paste0("- `tables/", files, "`", collapse = "\n") else "No tables were written.", "\n")
+```
+
+## R session
+
+```{r session-info}
+# Package versions, for reproducibility.
+sessionInfo()
+```

@@ -16,6 +16,7 @@ include { INFER_STRAND  } from './modules/infer_strand'
 include { FEATURECOUNTS } from './modules/featurecounts'
 include { MERGE_COUNTS; GENE_NAMES; QC_SUMMARY } from './modules/helpers'
 include { MULTIQC       } from './modules/multiqc'
+include { REPORT        } from './modules/report'
 
 // ---------------------------------------------------------------------------
 // Input checks. They run before any process starts, so mistakes fail in seconds.
@@ -234,4 +235,16 @@ workflow {
         params.containers.collect { k, v -> "${k}\t${v}" }
     def versions = channel.fromList(version_lines)
         .collectFile(name: 'versions.tsv', newLine: true, sort: false, storeDir: "${params.outdir}/pipeline_info")
+
+    // ---- Downstream analysis and HTML report -----------------------------
+    REPORT(
+        file("${projectDir}/report"),
+        MERGE_COUNTS.out,
+        samplesheet_copy,
+        GENE_NAMES.out,
+        QC_SUMMARY.out,
+        strand_report,
+        versions,
+        strandedness
+    )
 }
