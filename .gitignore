@@ -1,0 +1,18 @@
+# Nextflow
+work/
+.nextflow/
+.nextflow.log*
+results/
+# Test-data downloads (generator cache)
+assets/test/_downloads/
+# R / RStudio
+.Rproj.user/
+.Rhistory
+report/*.html
+report/tables/
+report/*_files/
+report/*.knit.md
+# Python
+__pycache__/
+# Plan-execution scratch
+.superpowers/
