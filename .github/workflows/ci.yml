@@ -29,6 +29,8 @@ jobs:
         run: python3 tests/report_edge.py
       - name: Custom-reference index cache and STAR memory
         run: bash tests/reference_cache.sh
+      - name: Upstream-only run and BAM folder
+        run: bash tests/options.sh
       - name: Upload report
         if: always()
         uses: actions/upload-artifact@v5

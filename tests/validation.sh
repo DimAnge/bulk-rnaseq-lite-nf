@@ -83,6 +83,9 @@ expect_ok "blank trailing rows (Excel)"  --input "$TMP/blank_rows.csv"
 expect_ok "relative FASTQ paths"         --input "$TMP/rel/relative.csv"
 expect_ok "test profile"                 -profile test
 expect_ok "memory with unit"               --input "$TMP/ok.csv" --max_memory 55.GB --max_cpus 18
+expect_ok "upstream only, one condition"  --input "$TMP/one_condition.csv" --skip_downstream
+sheet no_condition_col "sample,fastq_1,fastq_2" "ctrl_1,$READS/ctrl_1/R1.fastq.gz,"
+expect_ok "upstream only, no condition column" --input "$TMP/no_condition_col.csv" --skip_downstream
 expect_ok "mouse genome"                 --input "$TMP/ok.csv" --genome GRCm39
 
 echo "---- $pass passed, $fail failed"

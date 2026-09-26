@@ -6,11 +6,12 @@ results/
 ├── fastp/                Trimming reports (<sample>.fastp.html / .json)
 ├── star/                 <sample>.Log.final.out (mapping stats), <sample>.ReadsPerGene.out.tab,
 │                         strandedness.txt + strandedness_mqc.tsv (auto mode), BAMs with --save_bam
+│                         (with --bam_dir the BAMs go to that folder instead)
 ├── featurecounts/        counts.tsv (genes x samples, raw counts), gene_names.tsv,
 │   └── per_sample/       featureCounts output and summary per sample
 ├── qc/qc_summary.tsv     Reads, % retained, % uniquely mapped, % assigned per sample
 ├── multiqc/              multiqc_report.html: all upstream QC in one page
-├── report/               report.html + tables/ (CSV per contrast)
+├── report/               report.html + tables/ (CSV per contrast); not created with --skip_downstream
 ├── reference/            STAR index, only when --fasta/--gtf were given
 └── pipeline_info/        samplesheet.csv, versions.tsv, timeline/trace/execution reports
 ```

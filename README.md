@@ -21,6 +21,8 @@ samplesheet.csv ─► FastQC
 - Single- and paired-end samples, even mixed in one run.
 - Strandedness detected automatically (or set it yourself).
 - Design with batch or other covariates: `--design '~ batch + condition'`.
+- Upstream only: `--skip_downstream` stops at the count matrix if you prefer to do the statistics yourself.
+- Choose where things go: `--outdir` for results, `--bam_dir` to keep BAM files, `-w` for intermediate files.
 - Report: QC tables, PCA, sample distances, MA/volcano plots, heatmaps, DESeq2 vs edgeR comparison, GO dot plots, CSV tables.
 
 ## Quickstart

@@ -44,6 +44,8 @@ The first condition that appears is the reference level.
 | `--read_length` | `100` | Sets STAR `--sjdbOverhang` when building an index; 100 suits most data |
 | `--skip_trimming` | `false` | Align raw reads without fastp |
 | `--save_bam` | `false` | Copy BAM files to `results/star/` (they are large) |
+| `--bam_dir` | none | Copy BAM files to this folder instead, e.g. `--bam_dir /data/bams/project1` |
+| `--skip_downstream` | `false` | Stop after featureCounts: counts + QC, no DESeq2/edgeR/GO report. `condition` column becomes optional |
 | `--design` | `~ condition` | Model formula; must end in `condition`, e.g. `~ batch + condition` |
 | `--contrasts` | all vs reference | Comma-separated `A_vs_B` list, e.g. `treated_vs_control,KO_vs_WT` |
 | `--padj_cutoff` | `0.05` | Adjusted p-value cutoff (DESeq2 and edgeR) |
@@ -103,6 +105,26 @@ custom mouse reference. GENCODE GTFs (versioned IDs like `ENSG00000141510.18`) w
 
 The run also stops if samples disagree. The per-sample numbers are in
 `results/star/strandedness_mqc.tsv`, MultiQC and the report.
+
+## Upstream only (do the statistics yourself)
+
+`--skip_downstream` runs everything up to the count matrix and stops:
+
+```bash
+nextflow run main.nf -profile docker --input samplesheet.csv --genome GRCm39 --skip_downstream --outdir results
+```
+
+You get `results/featurecounts/counts.tsv` (raw counts, genes x samples), `gene_names.tsv`,
+`qc/qc_summary.tsv` and the MultiQC report. The samplesheet then only needs `sample` and `fastq_1`
+(+ `fastq_2`). To run the pipeline's report later on these counts, rerun without `--skip_downstream`
+and with `-resume`, or knit `report/rnaseq_report.Rmd` yourself (see below).
+
+## Where files go
+
+- `--outdir`: all results (default `results/`).
+- `-w`: Nextflow's work folder with every intermediate file (default `work/`); put it on a big disk.
+- `--bam_dir`: a separate folder for the BAM files, if you want to keep them (e.g. for IGV).
+- `--genome_cache`: downloaded genomes and STAR indexes, shared between runs.
 
 ## Re-running only the report
 

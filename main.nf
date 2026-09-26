@@ -80,7 +80,9 @@ def readSamplesheet(String path) {
     if (!rows) {
         error("Samplesheet ${path} has no samples")
     }
-    def missing = ['sample', 'fastq_1', 'condition'].findAll { c -> !rows[0].containsKey(c) }
+    // condition is only needed for the downstream analysis
+    def required = params.skip_downstream ? ['sample', 'fastq_1'] : ['sample', 'fastq_1', 'condition']
+    def missing = required.findAll { c -> !rows[0].containsKey(c) }
     if (missing && rows[0].keySet().any { k -> k.contains(';') }) {
         error("Samplesheet columns are separated by semicolons. Save it as comma-separated CSV (in Excel: 'CSV UTF-8 (Comma delimited)')")
     }
@@ -96,7 +98,7 @@ def readSamplesheet(String path) {
         if (!r.sample.matches('[A-Za-z0-9_.\\-]+')) {
             error("Sample name '${r.sample}' may only contain letters, digits, '_', '.' and '-'")
         }
-        if (!r.condition.matches('[A-Za-z][A-Za-z0-9_.]*') || r.condition.contains('_vs_')) {
+        if (!params.skip_downstream && (!r.condition.matches('[A-Za-z][A-Za-z0-9_.]*') || r.condition.contains('_vs_'))) {
             error("condition values must start with a letter, contain only letters, digits, '_' or '.', and not contain '_vs_' (got '${r.condition}' for sample ${r.sample})")
         }
         [r.fastq_1, r.fastq_2].findAll { p -> p }.each { p ->
@@ -186,8 +188,10 @@ def ensemblUrls(String genome, release) {
 workflow {
     checkParams()
     def rows = readSamplesheet(params.input)
-    checkDesign(rows)
-    checkContrasts(rows.collect { r -> r.condition }.unique())
+    if (!params.skip_downstream) {
+        checkDesign(rows)
+        checkContrasts(rows.collect { r -> r.condition }.unique())
+    }
 
     // One item per sample: [ [id, single_end], [fastq_1, (fastq_2)] ]
     def sheet_dir = file(params.input).parent
@@ -261,15 +265,17 @@ workflow {
     def versions = channel.fromList(version_lines)
         .collectFile(name: 'versions.tsv', newLine: true, sort: false, storeDir: "${params.outdir}/pipeline_info")
 
-    // ---- Downstream analysis and HTML report -----------------------------
-    REPORT(
-        file("${projectDir}/report"),
-        MERGE_COUNTS.out,
-        samplesheet_copy,
-        GENE_NAMES.out,
-        QC_SUMMARY.out,
-        strand_report,
-        versions,
-        strandedness
-    )
+    // ---- Downstream analysis and HTML report (skip with --skip_downstream) -
+    if (!params.skip_downstream) {
+        REPORT(
+            file("${projectDir}/report"),
+            MERGE_COUNTS.out,
+            samplesheet_copy,
+            GENE_NAMES.out,
+            QC_SUMMARY.out,
+            strand_report,
+            versions,
+            strandedness
+        )
+    }
 }

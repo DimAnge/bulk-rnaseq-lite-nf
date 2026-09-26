@@ -2,8 +2,10 @@
 // which INFER_STRAND uses to detect the library strandedness.
 process STAR_ALIGN {
     tag "${meta.id}"
-    publishDir "${params.outdir}/star", mode: 'copy',
-        saveAs: { fn -> (fn.endsWith('.bam') && !params.save_bam) ? null : fn }
+    publishDir "${params.outdir}/star", mode: 'copy', pattern: '*.{out,tab}'
+    // BAMs are large: copied only with --save_bam (to results/star/) or --bam_dir (to that folder)
+    publishDir "${params.bam_dir ?: params.outdir + '/star'}", mode: 'copy', pattern: '*.bam',
+        enabled: (params.save_bam || params.bam_dir) ? true : false
 
     input:
     tuple val(meta), path(reads, stageAs: 'input?/*')
