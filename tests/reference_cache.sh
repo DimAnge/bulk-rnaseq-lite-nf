@@ -9,7 +9,11 @@ trap 'rm -rf "$TMP"' EXIT
 cd "$TMP"
 run() { nextflow run "$REPO/main.nf" -profile test,docker -ansi-log false -w "$TMP/work" --outdir "$TMP/out" "$@" > "$TMP/run.log" 2>&1 || { tail -20 "$TMP/run.log"; exit 1; }; }
 
-run
+run --read_length 76   # command-line values arrive as text: "76" - 1 must still give 75
+grep -q -- "--sjdbOverhang 75" $(grep -l genomeGenerate "$TMP"/work/*/*/.command.sh | head -1) \
+    || { echo "FAIL: --read_length 76 did not give --sjdbOverhang 75"; exit 1; }
+echo "ok: --read_length from the command line gives sjdbOverhang 75"
+rm -rf "$TMP/work"
 # Same genome, edited annotation (drops the last 200 GTF lines) under another name.
 head -n -200 "$REPO/assets/test/genes.gtf" > "$TMP/genes_v2.gtf"
 run --gtf "$TMP/genes_v2.gtf"
@@ -20,6 +24,6 @@ echo "ok: different GTF built its own index ($n_index indexes)"
 
 # The test profile caps memory at 6 GB; genomeGenerate must get 90% of it.
 expected=$(( 6442450944 / 10 * 9 ))
-cmd=$(grep -l genomeGenerate "$TMP"/work/*/*/.command.sh | head -1)
+cmd=$(grep -l genomeGenerate "$TMP"/work/*/*/.command.sh | head -1)   # the second (new-GTF) build
 grep -q -- "--limitGenomeGenerateRAM $expected" "$cmd" || { echo "FAIL: limitGenomeGenerateRAM is not $expected:"; grep -o -- '--limitGenomeGenerateRAM [0-9]*' "$cmd"; exit 1; }
 echo "ok: limitGenomeGenerateRAM = $expected (90% of task memory)"

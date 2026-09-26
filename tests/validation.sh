@@ -73,6 +73,8 @@ expect_error "interaction terms"                            --input "$TMP/ok.csv
 expect_error "Contrast 'treated_vs_ctrl' is not valid"      --input "$TMP/ok.csv" --contrasts treated_vs_ctrl
 expect_error "compares a condition with itself"             --input "$TMP/ok.csv" --contrasts control_vs_control
 expect_error "separated by semicolons"                      --input "$TMP/semicolon.csv"
+expect_error "--max_memory needs a unit"                     --input "$TMP/ok.csv" --max_memory 55
+expect_error "--read_length must be a whole number"          --input "$TMP/ok.csv" --read_length 1OO
 expect_error "--padj_cutoff must be between 0 and 1"        --input "$TMP/ok.csv" --padj_cutoff 5
 
 expect_ok "valid samplesheet"            --input "$TMP/ok.csv" --design '~ batch + condition' --contrasts treated_vs_control
@@ -80,6 +82,7 @@ expect_ok "Excel BOM + CRLF samplesheet" --input "$TMP/bom_crlf.csv" --design '~
 expect_ok "blank trailing rows (Excel)"  --input "$TMP/blank_rows.csv"
 expect_ok "relative FASTQ paths"         --input "$TMP/rel/relative.csv"
 expect_ok "test profile"                 -profile test
+expect_ok "memory with unit"               --input "$TMP/ok.csv" --max_memory 55.GB --max_cpus 18
 expect_ok "mouse genome"                 --input "$TMP/ok.csv" --genome GRCm39
 
 echo "---- $pass passed, $fail failed"

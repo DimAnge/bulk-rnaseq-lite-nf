@@ -46,11 +46,20 @@ def checkParams() {
     if (!params.gtf && !(params.genome in supportedGenomes())) {
         error("--genome must be one of ${supportedGenomes().join(', ')} (got '${params.genome}'). For other species give --fasta and --gtf.")
     }
-    if (!(params.padj_cutoff > 0 && params.padj_cutoff <= 1)) {
+    // Values typed on the command line arrive as text, so convert before comparing.
+    def padj = params.padj_cutoff.toString()
+    if (!padj.isNumber() || !(padj.toDouble() > 0 && padj.toDouble() <= 1)) {
         error("--padj_cutoff must be between 0 and 1 (got ${params.padj_cutoff})")
     }
-    if (params.lfc_cutoff < 0) {
+    def lfc = params.lfc_cutoff.toString()
+    if (!lfc.isNumber() || lfc.toDouble() < 0) {
         error("--lfc_cutoff must be 0 or more (got ${params.lfc_cutoff})")
+    }
+    if (!params.read_length.toString().isInteger()) {
+        error("--read_length must be a whole number, e.g. 150 (got '${params.read_length}')")
+    }
+    if (!params.max_memory.toString().trim().matches('(?i)[0-9.]+\\s*\\.?\\s*(B|KB|MB|GB|TB)')) {
+        error("--max_memory needs a unit, e.g. --max_memory 55.GB (got '${params.max_memory}')")
     }
 }
 

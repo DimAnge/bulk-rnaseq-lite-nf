@@ -31,7 +31,7 @@ process STAR_INDEX {
         --genomeDir ${index_dir} \\
         --genomeFastaFiles ref.fa \\
         --sjdbGTFfile ref.gtf \\
-        --sjdbOverhang ${params.read_length - 1} \\
+        --sjdbOverhang ${params.read_length.toString().toInteger() - 1} \\
         --genomeSAindexNbases \$sa_bases \\
         --limitGenomeGenerateRAM ${task.memory.toBytes().intdiv(10) * 9} \\
         ${sparse}
