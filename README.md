@@ -60,6 +60,18 @@ The first condition listed is the reference.
 - [docs/usage.md](docs/usage.md): all parameters, references and cache, low-memory mode, re-running only the report, troubleshooting.
 - [docs/output.md](docs/output.md): every output file and how to read the report.
 
+## Roadmap
+
+Ideas for future versions:
+
+- **More analysis:** GSEA (pre-ranked, e.g. `fgsea` on MSigDB/Reactome) and KEGG pathways next to the current GO over-representation.
+- **More visualisation:** interactive PCA and volcano plots, per-gene count plots for genes of interest, sample-correlation heatmaps.
+- **Alternative tools**, selectable by a parameter:
+  - trimming: Trimmomatic or Trim Galore instead of fastp
+  - alignment/quantification: HISAT2, or Salmon for pseudo-alignment
+  - counting: HTSeq-count instead of featureCounts
+- **Other ways to run:** Singularity/Apptainer and SLURM profiles for clusters without Docker.
+
 ## Tools and citations
 
 FastQC · fastp (Chen et al. 2018, *Bioinformatics*) · STAR (Dobin et al. 2013, *Bioinformatics*) ·
